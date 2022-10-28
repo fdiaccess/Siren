@@ -2,10 +2,8 @@ package com.eggheadgames.siren;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.os.AsyncTask;
 import android.support.annotation.VisibleForTesting;
-import android.util.Log;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -20,6 +18,8 @@ import java.io.InputStreamReader;
 import java.lang.ref.WeakReference;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.net.ssl.HttpsURLConnection;
 
@@ -49,6 +49,8 @@ public class Siren {
     protected Context mApplicationContext;
     private ISirenListener mSirenListener;
     private WeakReference<Activity> mActivityRef;
+    private String mVersionCache;
+    private boolean mUseVersionCache = true;
 
     /**
      * Determines alert type during version code verification
@@ -130,6 +132,18 @@ public class Siren {
         this.minorUpdateAlertType = minorUpdateAlertType;
     }
 
+    public String getVersionCache() {
+        return mVersionCache;
+    }
+
+    public boolean isUseVersionCache() {
+        return mUseVersionCache;
+    }
+
+    public void setUseVersionCache(boolean mUseVersionCache) {
+        this.mUseVersionCache = mUseVersionCache;
+    }
+
     public void setPatchUpdateAlertType(SirenAlertType patchUpdateAlertType) {
         this.patchUpdateAlertType = patchUpdateAlertType;
     }
@@ -152,12 +166,20 @@ public class Siren {
 
     @VisibleForTesting
     protected void performVersionCheck(String appDescriptionUrl) {
-        new LoadJsonTask().execute(appDescriptionUrl);
+        if (mVersionCache == null && isUseVersionCache()) {
+            new LoadJsonTask().execute(appDescriptionUrl);
+        } else {
+            checkSessionVersion();
+        }
     }
 
     @VisibleForTesting
     protected void performVersionCheck() {
-        new LoadVersionFromGooglePlayStoreTask().execute();
+        if (mVersionCache == null && isUseVersionCache()) {
+            new LoadVersionFromGooglePlayStoreTask().execute();
+        } else {
+            checkSessionVersion();
+        }
     }
 
     @VisibleForTesting
@@ -194,6 +216,13 @@ public class Siren {
 
     protected SirenHelper getSirenHelper() {
         return SirenHelper.getInstance();
+    }
+
+    private void checkSessionVersion() {
+        getSirenHelper().logError(getClass().getSimpleName(), "Check version from cache (" + mVersionCache +")");
+        String packageName = Siren.sirenInstance.getSirenHelper().getPackageName(Siren.sirenInstance.mApplicationContext);
+        String jsonString = "{ \"" + packageName + "\": { \"" + Constants.JSON_MIN_VERSION_NAME +"\": \"" + mVersionCache + "\" } }";
+        Siren.sirenInstance.handleVerificationResults(jsonString);
     }
 
     private boolean checkVersionName(JSONObject appJson) throws JSONException{
@@ -383,7 +412,7 @@ public class Siren {
             String packageName = Siren.sirenInstance.getSirenHelper().getPackageName(Siren.sirenInstance.mApplicationContext);
 
             try {
-                Document document = Jsoup.connect("https://play.google.com/store/apps/details?id=" + packageName + "&hl=en")
+                Document document = Jsoup.connect("https://play.google.com/store/apps/details?id=" + packageName + "&hl=en&gl=US")
                     .timeout(30000)
                     .userAgent("Mozilla/5.0 (Windows; U; WindowsNT 5.1; en-US; rv1.8.1.6) Gecko/20070725 Firefox/2.0.0.6")
                     .referrer("http://www.google.com")
@@ -396,6 +425,15 @@ public class Siren {
                             for (Element sibElemet : sibElemets) {
                                 newVersion = sibElemet.text();
                             }
+                        }
+                    }
+
+                    if (newVersion == null) {
+                        String content = document.toString();
+                        Pattern p = Pattern.compile("\\[\\[\\[\"([\\d.]+?)\"\\]\\]");
+                        Matcher m = p.matcher(content);
+                        if (m.find()) {
+                            newVersion = m.group(1);
                         }
                     }
                 }
